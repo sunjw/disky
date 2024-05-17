@@ -39,6 +39,8 @@ android {
         outputs.all {
             if(name.contains("release"))
                 (this as BaseVariantOutputImpl).outputFileName = "disky-release-v$versionName.apk"
+            else
+                (this as BaseVariantOutputImpl).outputFileName = "disky-debug-v$versionName.apk"
         }
     }
     compileOptions {
