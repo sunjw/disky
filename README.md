@@ -9,7 +9,7 @@
 
 [![license: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://github.com/newhinton/disky/blob/master/LICENSE) [![Latest Downloads](https://img.shields.io/github/downloads/newhinton/disky/latest/total
 )](https://github.com/newhinton/disky/releases) [![GitHub release](https://img.shields.io/github/v/release/newhinton/disky?include_prereleases)](https://github.com/newhinton/disky/releases/latest)
-[![supportive flags](https://img.shields.io/badge/support-🇺🇦_🏳️‍⚧_🏳️‍🌈-4aad4e)](https://felixnuesse.de/disky) [![Android Lint](https://github.com/newhinton/timed-silence/actions/workflows/lint.yml/badge.svg)](https://github.com/newhinton/disky/actions/workflows/lint.yml)
+[![supportive flags](https://img.shields.io/badge/support-🇺🇦_🏳️‍⚧_🏳️‍🌈-4aad4e)](https://felixnuesse.de/disky) [![Android Lint](https://github.com/newhinton/disky/actions/workflows/lint.yml/badge.svg?branch=master)](https://github.com/newhinton/disky/actions/workflows/lint.yml)
 
 [<img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
 alt="Get it on F-Droid"
@@ -77,7 +77,7 @@ You can then build the app normally from Android Studio or from CLI by running:
 
 Contributing
 ------------
-See [CONTRIBUTING](./CODE_OF_CONDUCT.md)
+See [CONTRIBUTING](./CONTRIBUTING.md)
 
 Anyone is welcome to contribute and help out. However, hate, discrimination and racism are decidedly unwelcome here. If you feel offended by this, you might belong to the group of people who are not welcome. I will not tolerate hate in any way.
 
@@ -95,6 +95,11 @@ About this app
 -----------------
 ### License
 This app is released under the terms of the [GPLv3 license](https://gitea.felixnuesse.de/felix/disky/blob/master/LICENSE). 
+There are older releases that accidentially contained the wrong license file, namely MIT.
+This entire Repository is and was GPLv3, as stated by this Readme in this section, and the pill below the title on top of this document.
+It was also stated in the app itself.
+
+
 
 ### Libraries
 - [AppIntro](https://github.com/AppIntro/AppIntro) - This library is responsible for the easy-to-use introduction to the app!
