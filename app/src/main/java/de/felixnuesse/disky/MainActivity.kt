@@ -23,6 +23,7 @@ import android.widget.AdapterView.OnItemClickListener
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -45,6 +46,8 @@ import de.felixnuesse.disky.databinding.ActivityMainBinding
 import de.felixnuesse.disky.extensions.getAppname
 import de.felixnuesse.disky.extensions.readableFileSize
 import de.felixnuesse.disky.extensions.tag
+import de.felixnuesse.disky.model.GoBackUp
+import de.felixnuesse.disky.model.NoItems
 import de.felixnuesse.disky.model.StoragePrototype
 import de.felixnuesse.disky.model.StorageResult
 import de.felixnuesse.disky.model.StorageType
@@ -53,6 +56,7 @@ import de.felixnuesse.disky.ui.BottomSheet
 import de.felixnuesse.disky.ui.ChangeFolderCallback
 import de.felixnuesse.disky.ui.RecyclerViewAdapter
 import de.felixnuesse.disky.utils.PermissionManager
+import de.felixnuesse.disky.worker.BackgroundWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,6 +77,8 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
     companion object {
         const val APP_PREFERENCES = "APP_PREFERENCES"
         const val APP_PREFERENCE_SORTORDER = "APP_PREFERENCE_SORTORDER"
+        const val APP_PREFERENCE_LSW_TYPE = "APP_PREFERENCE_LSW_TYPE"
+        const val APP_PREFERENCE_LSW_TRESHOLD = "APP_PREFERENCE_LSW_TRESHOLD"
     }
 
 
@@ -99,7 +105,7 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
 
         storageManager = getSystemService(Context.STORAGE_SERVICE) as StorageManager
 
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.main) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
@@ -133,14 +139,23 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         registerReciever()
         if(isIntroComplete) {
             triggerDataUpdate()
-            //WorkerManager().scheduleDaily(this)
+            BackgroundWorker.schedule(this)
+        }
+
+        // Add a back pressed callback
+        onBackPressedDispatcher.addCallback(this) {
+            if(!handleBack()){
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
         }
     }
 
     fun registerReciever() {
         val reciever = object: BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent) {
-                Log.e("MAIN", "onRecieve")
+                //Log.e("MAIN", "onRecieve")
                 if(intent.action == SCAN_ABORTED) {
                     binding.progressLabel.text = "Scan was aborted"
                     return
@@ -173,7 +188,16 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         Log.e(tag(), "trigger update!")
         runOnUiThread {
             binding.folders.visibility = View.INVISIBLE
+            binding.overview.visibility = View.INVISIBLE
             binding.loading.visibility = View.VISIBLE
+
+            binding.lottie.setOnLongClickListener {
+                binding.folders.visibility = View.VISIBLE
+                binding.overview.visibility = View.VISIBLE
+                binding.loading.visibility = View.GONE
+                return@setOnLongClickListener false
+            }
+
             fadeTextview(getString(R.string.calculating), binding.freeText)
             fadeTextview(getString(R.string.calculating), binding.usedText)
 
@@ -181,6 +205,7 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
             theme.resolveAttribute(com.google.android.material.R.attr.colorPrimaryDark, primaryColor, true)
             val targetColor = Color.valueOf(Color.parseColor("#FF00FF"))
 
+            Log.e(tag(), "prepared ui...")
             binding.lottie.addValueCallback(
                 KeyPath("**"),
                 LottieProperty.COLOR
@@ -198,14 +223,19 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         val service = Intent(this, ScanService::class.java)
         service.putExtra(SCAN_STORAGE, selectedStorage)
         service.putExtra(SCAN_SUBDIR, currentElement?.getParentPath())
+
+        Log.e(tag(), "start service...")
         startForegroundService(service)
+        Log.e(tag(), "started service!")
     }
 
-    override fun onBackPressed() {
-        if (currentElement != rootElement) {
+
+    fun handleBack(): Boolean {
+        return if (currentElement != rootElement) {
             currentElement?.parent?.let { showFolder(it) }
+            true
         } else {
-            super.onBackPressed()
+            false
         }
     }
 
@@ -298,7 +328,20 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         val animation: LayoutAnimationController = AnimationUtils.loadLayoutAnimation(this, R.anim.recyclerview_animation)
         recyclerView.layoutAnimation = animation
         recyclerView.layoutManager = LinearLayoutManager(this)
-        val recyclerViewAdapter = RecyclerViewAdapter(this, currentRoot.getChildren(), this)
+
+
+        // create a copy of the list. If we dont, the new items are getting added permanently, and
+        // going back and forth will create duplicates of them.
+        val children = arrayListOf<StoragePrototype>()
+        if(currentRoot.parent != null) {
+            children.add(0, GoBackUp(currentRoot.parent!!))
+        }
+        children.addAll(currentRoot.getChildren())
+        if(currentRoot.getChildren().isEmpty()) {
+            children.add(NoItems())
+        }
+
+        val recyclerViewAdapter = RecyclerViewAdapter(this, children, this)
         recyclerView.adapter = recyclerViewAdapter
     }
 
@@ -307,10 +350,16 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
     }
 
     override fun scanComplete(result: StorageResult) {
+
+        // todo: remove this logging:
+        result.scannedVolume
+        Log.e("POST_SCAN", "${result.scannedVolume} ${result.free.div(result.total)} ${result.used}")
+
         runOnUiThread{
             var internalRootElement = result.rootElement
             if(internalRootElement != null) {
                 binding.folders.visibility = View.VISIBLE
+                binding.overview.visibility = View.VISIBLE
                 binding.loading.visibility = View.GONE
 
 
@@ -325,11 +374,11 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
                 if(!result.isPartialScan) {
                     rootElement = internalRootElement
                     showFolder(rootElement!!)
-                    updateStaticElements(rootElement!!, result.total, result.free)
                 } else {
                     rootElement?.mergePartialTree(internalRootElement)
                     currentElement?.let { changeFolder(it) }
                 }
+                updateStaticElements(rootElement!!, result.total, result.free)
             }
         }
     }
