@@ -14,8 +14,8 @@ android {
         applicationId = "de.felixnuesse.disky"
         minSdk = 30
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.2.1"
+        versionCode = 9
+        versionName = "1.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -70,4 +70,5 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.lottie)
+    implementation ("com.github.bumptech.glide:glide:4.16.0")
 }
