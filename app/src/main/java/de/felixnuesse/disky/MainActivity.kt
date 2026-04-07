@@ -5,23 +5,16 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.graphics.Color
 import android.os.Bundle
 import android.os.Environment.MEDIA_UNMOUNTED
 import android.os.storage.StorageManager
-import android.util.Log
-import android.util.TypedValue
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.view.animation.AlphaAnimation
-import android.view.animation.Animation
-import android.view.animation.Animation.AnimationListener
 import android.view.animation.AnimationUtils
 import android.view.animation.LayoutAnimationController
 import android.widget.AdapterView.OnItemClickListener
 import android.widget.ArrayAdapter
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.enableEdgeToEdge
@@ -30,8 +23,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.airbnb.lottie.LottieProperty
-import com.airbnb.lottie.model.KeyPath
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import de.felixnuesse.disky.IntroActivity.Companion.INTRO_PREFERENCES
 import de.felixnuesse.disky.IntroActivity.Companion.intro_v1_0_0_completed
@@ -51,15 +42,17 @@ import de.felixnuesse.disky.model.NoItems
 import de.felixnuesse.disky.model.StoragePrototype
 import de.felixnuesse.disky.model.StorageResult
 import de.felixnuesse.disky.model.StorageType
+import de.felixnuesse.disky.scanner.ResultRepository
 import de.felixnuesse.disky.scanner.ScanCompleteCallback
 import de.felixnuesse.disky.ui.BottomSheet
 import de.felixnuesse.disky.ui.ChangeFolderCallback
 import de.felixnuesse.disky.ui.RecyclerViewAdapter
 import de.felixnuesse.disky.utils.PermissionManager
 import de.felixnuesse.disky.worker.BackgroundWorker
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import de.felixnuesse.disky.ui.utils.LottieColorizer.Companion.colorizeLottie
+import de.felixnuesse.disky.ui.utils.SortingUtils
+import de.felixnuesse.disky.ui.utils.TextFading.Companion.fadeTextview
+import timber.log.Timber
 
 
 class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCallback {
@@ -89,14 +82,17 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         setContentView(binding.root)
         setSupportActionBar(binding.toolbar)
 
-        val sharedPref = applicationContext.getSharedPreferences(INTRO_PREFERENCES, Context.MODE_PRIVATE)
+        val sharedPref =
+            applicationContext.getSharedPreferences(INTRO_PREFERENCES, MODE_PRIVATE)
         val isIntroComplete = sharedPref.getBoolean(intro_v1_0_0_completed, false)
         if (!isIntroComplete) {
             startActivity(Intent(this, IntroActivity::class.java))
             finish()
         }
 
-        if(!PermissionManager(this).hasAllRequiredPermissions()) {
+        LoggingUtils().configure(applicationContext)
+
+        if (!PermissionManager(this).hasAllRequiredPermissions()) {
             // todo: implement runtime intro for removed permissions
             //startActivity(Intent(this, IntroActivity::class.java))
             //finish()
@@ -114,12 +110,12 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         val storageList = arrayListOf<String>()
         storageManager.storageVolumes.forEach {
 
-            if(it.state == MEDIA_UNMOUNTED) {
+            if (it.state == MEDIA_UNMOUNTED) {
                 return@forEach
             }
 
             storageList.add(it.getDescription(this))
-            if(it.isPrimary) {
+            if (it.isPrimary) {
                 selectedStorage = it.getDescription(this)
             }
         }
@@ -130,264 +126,54 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         binding.dropdown.onItemClickListener = OnItemClickListener { parent, view, position, id ->
             selectedStorage = storageList[position]
             binding.removableStorageWarning.visibility = View.GONE
-            triggerDataUpdate()
+            refreshData()
         }
-        if(storageList.size==1){
+        if (storageList.size == 1) {
             binding.storageSelector.visibility = View.GONE
         }
 
-        registerReciever()
-        if(isIntroComplete) {
-            triggerDataUpdate()
+        registerReceiver()
+        if (isIntroComplete) {
+            refreshData()
             BackgroundWorker.schedule(this)
         }
 
         // Add a back pressed callback
         onBackPressedDispatcher.addCallback(this) {
-            if(!handleBack()){
+            if (!handleBack()) {
                 isEnabled = false
                 onBackPressedDispatcher.onBackPressed()
                 isEnabled = true
             }
         }
-    }
 
-    fun registerReciever() {
-        val reciever = object: BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent) {
-                //Log.e("MAIN", "onRecieve")
-                if(intent.action == SCAN_ABORTED) {
-                    binding.progressLabel.text = "Scan was aborted"
-                    return
-                }
-                if(intent.action == SCAN_REFRESH_REQUESTED) {
-                    requestDataRefresh()
-                }
-                if(intent.action == SCAN_PROGRESSED) {
-                    var progress = intent.getIntExtra(SCAN_PROGRESSED, 0)
-                    binding.progressIndicator.isIndeterminate = false
-                    binding.progressIndicator.progress = progress
-                    binding.progressLabel.text = "$progress%"
-                }
-                if(intent.action == SCAN_COMPLETE) {
-                    CoroutineScope(Dispatchers.IO).launch{
-                        ScanService.getResult()?.let { scanComplete(it) }
-                        Log.e(tag(), "Scanning and processing took: ${System.currentTimeMillis()-lastScanStarted}ms")
-                    }
-                }
-            }
-        }
-        val filter = IntentFilter(SCAN_COMPLETE)
-        filter.addAction(SCAN_ABORTED)
-        filter.addAction(SCAN_REFRESH_REQUESTED)
-        filter.addAction(SCAN_PROGRESSED)
-        LocalBroadcastManager.getInstance(this).registerReceiver(reciever, filter)
-    }
-
-    fun triggerDataUpdate() {
-        Log.e(tag(), "trigger update!")
-        runOnUiThread {
-            binding.folders.visibility = View.INVISIBLE
-            binding.overview.visibility = View.INVISIBLE
-            binding.loading.visibility = View.VISIBLE
-
-            binding.lottie.setOnLongClickListener {
-                binding.folders.visibility = View.VISIBLE
-                binding.overview.visibility = View.VISIBLE
-                binding.loading.visibility = View.GONE
-                return@setOnLongClickListener false
-            }
-
-            fadeTextview(getString(R.string.calculating), binding.freeText)
-            fadeTextview(getString(R.string.calculating), binding.usedText)
-
-            val primaryColor = TypedValue()
-            theme.resolveAttribute(com.google.android.material.R.attr.colorPrimaryDark, primaryColor, true)
-            val targetColor = Color.valueOf(Color.parseColor("#FF00FF"))
-
-            Log.e(tag(), "prepared ui...")
-            binding.lottie.addValueCallback(
-                KeyPath("**"),
-                LottieProperty.COLOR
-            ) {
-                val svg = Color.valueOf(it.startValue)
-                if(svg == targetColor) {
-                    primaryColor.data
-                } else {
-                    it.startValue
-                }
-            }
-        }
-
-        lastScanStarted = System.currentTimeMillis()
-        val service = Intent(this, ScanService::class.java)
-        service.putExtra(SCAN_STORAGE, selectedStorage)
-        service.putExtra(SCAN_SUBDIR, currentElement?.getParentPath())
-
-        Log.e(tag(), "start service...")
-        startForegroundService(service)
-        Log.e(tag(), "started service!")
-    }
-
-
-    fun handleBack(): Boolean {
-        return if (currentElement != rootElement) {
-            currentElement?.parent?.let { showFolder(it) }
-            true
-        } else {
-            false
-        }
-    }
-
-    fun updateStaticElements(currentRoot: StoragePrototype?, rootTotal: Long, rootUnused: Long) {
-        if(currentRoot != null) {
-            val currentlyUsed = currentRoot.getCalculatedSize().div(rootTotal.toDouble())
-            fadeTextview(
-                readableFileSize(currentRoot.getCalculatedSize()),
-                binding.usedText
-            )
-            ObjectAnimator
-                .ofInt(binding.dataUsage, "progress", (currentlyUsed*100).toInt())
-                .setDuration(300)
-                .start()
-        } else {
-            binding.dataUsage.progress = 0
-        }
-
-        fadeTextview(
-            readableFileSize(rootUnused),
-            binding.freeText
-        )
-    }
-
-    fun showFolder(currentRoot: StoragePrototype) {
-        currentElement = currentRoot
-
-        if(currentRoot.parent==null) {
-            fadeTextview(
-                getString(R.string.uicontext_folder_rootdir),
-                binding.infoText
-            )
-        }
-
-        if(currentRoot.storageType == StorageType.APP) {
-            fadeTextview(
-                getString(
-                    R.string.uicontext_folder_app,
-                    getAppname(currentRoot.name, this),
-                    readableFileSize(currentRoot.getCalculatedSize())
-                ),
-                binding.infoText
-            )
-        }
-
-        if(currentRoot.storageType == StorageType.APP_COLLECTION) {
-            fadeTextview(
-                getString(
-                    R.string.uicontext_folder_appcollection,
-                    currentRoot.getChildren().size,
-                    readableFileSize(currentRoot.getCalculatedSize())
-                ),
-                binding.infoText
-            )
-        }
-
-        if(currentRoot.storageType == StorageType.FOLDER) {
-            fadeTextview(
-                getString(
-                    R.string.uicontext_folder_folder,
-                    currentRoot.name,
-                    readableFileSize(currentRoot.getCalculatedSize())
-                ),
-                binding.infoText
-            )
-        }
-
-        //first, calculate percentages.
-        val max = currentRoot.getCalculatedSize()
-        currentRoot.getChildren().forEach {
-            val percentage = (it.getCalculatedSize().toFloat()/max.toFloat())
-            it.percent = (percentage*100).toInt()
-        }
-
-        val sharedPref = applicationContext.getSharedPreferences(APP_PREFERENCES, Context.MODE_PRIVATE)
-        val sortbySize = sharedPref.getInt(APP_PREFERENCE_SORTORDER, 0) == 0 // 0 is size. If we get more, we need to decide here how to sort.
-        //second, sort children
-        val l = if (sortbySize) {
-            currentElement!!.getChildren().sortedWith(compareBy{ list -> list.getCalculatedSize()})
-        } else {
-            currentElement!!.getChildren().sortedWith(compareBy{ list -> list.name.lowercase()}).reversed()
-        }
-        currentElement!!.clearChildren()
-        currentElement!!.getChildren().addAll(l.reversed())
-
-        val recyclerView = binding.folders
-
-        registerForContextMenu(recyclerView)
-
-        val animation: LayoutAnimationController = AnimationUtils.loadLayoutAnimation(this, R.anim.recyclerview_animation)
-        recyclerView.layoutAnimation = animation
-        recyclerView.layoutManager = LinearLayoutManager(this)
-
-
-        // create a copy of the list. If we dont, the new items are getting added permanently, and
-        // going back and forth will create duplicates of them.
-        val children = arrayListOf<StoragePrototype>()
-        if(currentRoot.parent != null) {
-            children.add(0, GoBackUp(currentRoot.parent!!))
-        }
-        children.addAll(currentRoot.getChildren())
-        if(currentRoot.getChildren().isEmpty()) {
-            children.add(NoItems())
-        }
-
-        val recyclerViewAdapter = RecyclerViewAdapter(this, children, this)
-        recyclerView.adapter = recyclerViewAdapter
-    }
-
-    override fun changeFolder(folder: StoragePrototype) {
-        showFolder(folder)
-    }
-
-    override fun scanComplete(result: StorageResult) {
-
-        // todo: remove this logging:
-        result.scannedVolume
-        Log.e("POST_SCAN", "${result.scannedVolume} ${result.free.div(result.total)} ${result.used}")
-
-        runOnUiThread{
-            var internalRootElement = result.rootElement
-            if(internalRootElement != null) {
-                binding.folders.visibility = View.VISIBLE
-                binding.overview.visibility = View.VISIBLE
-                binding.loading.visibility = View.GONE
-
-
-                binding.removableStorageWarning.visibility = if(result.scannedVolume?.isRemovable == true) {
-                    View.VISIBLE
-                } else {
-                    View.GONE
-                }
-
-                (binding.dropdown as MaterialAutoCompleteTextView)
-                    .setText(result.scannedVolume?.getDescription(this), false)
-                if(!result.isPartialScan) {
-                    rootElement = internalRootElement
-                    showFolder(rootElement!!)
-                } else {
-                    rootElement?.mergePartialTree(internalRootElement)
-                    currentElement?.let { changeFolder(it) }
-                }
-                updateStaticElements(rootElement!!, result.total, result.free)
+        ResultRepository.result.observe(this) { complexObject ->
+            try {
+                // Update UI with the complex object
+                scanComplete(complexObject)
+                Timber.tag(tag()).e("Scanning and processing took: ${System.currentTimeMillis() - lastScanStarted}ms"
+                )
+            } catch (e: Exception) {
+                Timber.tag(tag()).e("There was an exception: ${e.message}")
+                Timber.tag(tag()).e(e)
+                Toast.makeText(this, "Exception: ${e.javaClass}", Toast.LENGTH_LONG).show()
             }
         }
     }
+
+
+    override fun onResume() {
+        super.onResume()
+        Timber.e("onResume")
+    }
+
 
     //Options Menu
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
         return true
     }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         val id = item.itemId
 
@@ -402,44 +188,292 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
             return true
         }
         if (id == R.id.action_reload) {
-            requestDataRefresh()
+            refreshData(true)
             return true
         }
         return super.onOptionsItemSelected(item)
     }
 
-    private fun requestDataRefresh() {
-        when(currentElement?.storageType) {
-            StorageType.APP -> {
-                Toast.makeText(this, R.string.reload_blocked_because_inapps, Toast.LENGTH_SHORT).show()
-            }
-            else -> {
-                Toast.makeText(this, R.string.reload, Toast.LENGTH_SHORT).show()
-                triggerDataUpdate()
+
+    /** OVERRIDES FOR INTERFACES **/
+
+    override fun changeFolder(folder: StoragePrototype) {
+        Timber.e("changeFolder")
+        showFolder(folder)
+    }
+
+    override fun scanComplete(result: StorageResult) {
+
+
+        Timber.tag("POST_SCAN").e("scanComplete")
+        Timber.tag("POST_SCAN").e("Result SV: ${result.scannedVolume}")
+        Timber.tag("POST_SCAN").e("Result FR: ${result.free}")
+        Timber.tag("POST_SCAN").e("Result TO: ${result.total}")
+        Timber.tag("POST_SCAN").e("Result US: ${result.used}")
+        Timber.tag("POST_SCAN").e("Result PS: ${result.isPartialScan}")
+        Timber.tag("POST_SCAN").e("Result RN: ${result.rootElement?.name}")
+        val s = android.text.format.Formatter.formatShortFileSize(this,
+            result.asJsonString().toByteArray().size.toLong()
+        )
+        Timber.tag("POST_SCAN").e("Result RN: ${s}")
+
+        Timber.tag("POST_SCAN").e(
+            "${result.scannedVolume} ${result.free.div(result.total)} ${result.used}"
+        )
+
+        runOnUiThread {
+            Timber.tag("POST_SCAN").e("runOnUiThread")
+            val internalRootElement = result.rootElement
+            if (internalRootElement != null) {
+                binding.folders.visibility = View.VISIBLE
+                binding.overview.visibility = View.VISIBLE
+                binding.loading.visibility = View.GONE
+
+
+                binding.removableStorageWarning.visibility =
+                    if (result.scannedVolume?.isRemovable == true) {
+                        View.VISIBLE
+                    } else {
+                        View.GONE
+                    }
+
+                val dropdown = (binding.dropdown as MaterialAutoCompleteTextView)
+                dropdown.setText(result.scannedVolume?.getDescription(this), false)
+
+                if (!result.isPartialScan) {
+                    rootElement = internalRootElement
+                    showFolder(rootElement!!)
+                } else {
+                    rootElement?.mergePartialTree(internalRootElement)
+                    currentElement?.let { changeFolder(it) }
+                }
+                updateStaticElements(rootElement!!, result.total, result.free)
+            } else {
+                Timber.tag("POST_SCAN").e("internalRootElement was null, aborting display")
             }
         }
     }
-    private fun fadeTextview(text: String, view: TextView) {
-        if(view.text == text) {
+
+
+    /** UI METHODS **/
+
+    fun registerReceiver() {
+        Timber.e("registerReciever")
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent) {
+                Timber.e("onRecieve: ${intent.action}")
+                if (intent.action == SCAN_ABORTED) {
+                    binding.progressLabel.text = getString(R.string.scan_was_aborted)
+                    return
+                }
+                if (intent.action == SCAN_REFRESH_REQUESTED) {
+                    refreshData(true)
+                }
+                if (intent.action == SCAN_PROGRESSED) {
+                    val progress = intent.getIntExtra(SCAN_PROGRESSED, 0)
+                    Timber.e("Prog: ${progress}")
+                    binding.progressIndicator.isIndeterminate = false
+                    binding.progressIndicator.progress = progress
+                    binding.progressLabel.text = "$progress%"
+                }
+                if (intent.action == SCAN_COMPLETE) {
+                    Timber.e("Scan done!")
+                    binding.progressLabel.text = "0%" // reset, so that on a re-scan, it shows 0 first.
+                    Timber.tag(tag()).e(
+                        "OLD: Scanning and processing took: ${System.currentTimeMillis() - lastScanStarted}ms"
+                    )
+                }
+            }
+        }
+        val filter = IntentFilter(SCAN_COMPLETE)
+        filter.addAction(SCAN_ABORTED)
+        filter.addAction(SCAN_REFRESH_REQUESTED)
+        filter.addAction(SCAN_PROGRESSED)
+        LocalBroadcastManager.getInstance(this).registerReceiver(receiver, filter)
+    }
+
+    fun refreshData(considerContext: Boolean = false) {
+        Timber.tag(tag()).e("trigger update!")
+
+        var currentTypeNotApplicable = false
+
+        if(considerContext) {
+
+            val type = when (currentElement?.storageType) {
+                StorageType.APP -> {
+                    currentTypeNotApplicable = true
+                    R.string.reload_blocked_because_inapps
+                }
+                else -> {
+                    R.string.reload
+                }
+            }
+
+            Toast.makeText(this, type, Toast.LENGTH_SHORT).show()
+        }
+        if(currentTypeNotApplicable) {
             return
         }
-        view.visibility = View.VISIBLE
 
-        val fadeIn = AlphaAnimation(0.0f, 1.0f)
-        val fadeOut = AlphaAnimation(1.0f, 0.0f)
-        fadeIn.duration = 300
-        fadeOut.duration = 300
+        runOnUiThread {
+            binding.folders.visibility = View.INVISIBLE
+            binding.overview.visibility = View.INVISIBLE
+            binding.loading.visibility = View.VISIBLE
 
-        fadeOut.setAnimationListener(object : AnimationListener {
-            override fun onAnimationStart(animation: Animation?) {}
-            override fun onAnimationRepeat(animation: Animation?) {}
-            override fun onAnimationEnd(animation: Animation) {
-                view.text = text
-                view.startAnimation(fadeIn)
+            binding.lottie.setOnLongClickListener {
+                binding.folders.visibility = View.VISIBLE
+                binding.overview.visibility = View.VISIBLE
+                binding.loading.visibility = View.GONE
+                Timber.e("Lottie: Remove Animation")
+                return@setOnLongClickListener false
             }
 
-        })
-        view.startAnimation(fadeOut)
+            Timber.e("prepared ui...")
+            fadeTextview(getString(R.string.calculating), binding.freeText)
+            fadeTextview(getString(R.string.calculating), binding.usedText)
+            colorizeLottie(binding.lottie, theme)
+        }
+
+        lastScanStarted = System.currentTimeMillis()
+        val service = Intent(this, ScanService::class.java)
+        service.putExtra(SCAN_STORAGE, selectedStorage)
+        service.putExtra(SCAN_SUBDIR, currentElement?.getParentPath())
+
+        Timber.tag(tag()).e("start service...")
+        startForegroundService(service)
+        Timber.tag(tag()).e("started service!")
+
+
+        /*
+        Directly calling the scanner is possible:
+        var mcontext = this
+        CoroutineScope(Dispatchers.IO).launch {
+            val scanner = Scanner(mcontext, mcontext)
+            val resultObject = scanner.scan(selectedStorage, currentElement?.getParentPath())
+            ResultRepository.postResult(resultObject!!)
+        }
+        */
     }
 
+    fun handleBack(): Boolean {
+        return if (currentElement != rootElement) {
+            currentElement?.parent?.let { showFolder(it) }
+            true
+        } else {
+            false
+        }
+    }
+
+    fun updateStaticElements(currentRoot: StoragePrototype?, rootTotal: Long, rootUnused: Long) {
+        Timber.e("updateStaticElements")
+        if (currentRoot != null) {
+            val currentlyUsed = currentRoot.getCalculatedSize().div(rootTotal.toDouble())
+            fadeTextview(
+                readableFileSize(currentRoot.getCalculatedSize()),
+                binding.usedText
+            )
+            ObjectAnimator
+                .ofInt(binding.dataUsage, "progress", (currentlyUsed * 100).toInt())
+                .setDuration(300)
+                .start()
+            Timber.e("updateStaticElements: CurrentRoot not null!")
+        } else {
+            binding.dataUsage.progress = 0
+            Timber.e("updateStaticElements: Progress 0")
+        }
+
+        fadeTextview(readableFileSize(rootUnused), binding.freeText)
+    }
+
+    fun showFolder(currentRoot: StoragePrototype) {
+        Timber.e("showFolder")
+        currentElement = currentRoot
+
+        if (currentRoot.parent == null) {
+            Timber.e("showFolder 1")
+            fadeTextview(
+                getString(R.string.uicontext_folder_rootdir),
+                binding.infoText)
+        }
+        Timber.e("showFolder 2")
+
+        if (currentRoot.storageType == StorageType.APP) {
+            Timber.e("showFolder 3")
+            fadeTextview(
+                getString(
+                    R.string.uicontext_folder_app,
+                    getAppname(currentRoot.name, this),
+                    readableFileSize(currentRoot.getCalculatedSize())
+                ),
+                binding.infoText
+            )
+        }
+        Timber.e("showFolder 4")
+
+
+        if (currentRoot.storageType == StorageType.APP_COLLECTION) {
+            Timber.e("showFolder 5")
+            fadeTextview(
+                getString(
+                    R.string.uicontext_folder_appcollection,
+                    currentRoot.getChildren().size,
+                    readableFileSize(currentRoot.getCalculatedSize())
+                ),
+                binding.infoText
+            )
+        }
+        Timber.e("showFolder 6")
+
+        if (currentRoot.storageType == StorageType.FOLDER) {
+            Timber.e("showFolder 7")
+            fadeTextview(
+                getString(
+                    R.string.uicontext_folder_folder,
+                    currentRoot.name,
+                    readableFileSize(currentRoot.getCalculatedSize())
+                ),
+                binding.infoText
+            )
+        }
+        Timber.e("showFolder 8")
+
+        //first, calculate percentages.
+        val max = currentRoot.getCalculatedSize()
+        Timber.e("showFolder 9")
+        currentRoot.getChildren().forEach {
+            val percentage = (it.getCalculatedSize().toFloat() / max.toFloat())
+            it.percent = (percentage * 100).toInt()
+        }
+        Timber.e("showFolder 10")
+
+        val sortedList = SortingUtils.getSortedList(applicationContext, currentElement!!.getChildren())
+        currentElement!!.clearChildren()
+        currentElement!!.getChildren().addAll(sortedList)
+
+        val recyclerView = binding.folders
+
+        registerForContextMenu(recyclerView)
+
+        val animation: LayoutAnimationController =
+            AnimationUtils.loadLayoutAnimation(this, R.anim.recyclerview_animation)
+        recyclerView.layoutAnimation = animation
+        recyclerView.layoutManager = LinearLayoutManager(this)
+
+
+        // create a copy of the list. If we dont, the new items are getting added permanently, and
+        // going back and forth will create duplicates of them.
+        val children = arrayListOf<StoragePrototype>()
+        if (currentRoot.parent != null) {
+            children.add(0, GoBackUp(currentRoot.parent!!))
+        }
+        children.addAll(currentRoot.getChildren())
+        if (currentRoot.getChildren().isEmpty()) {
+            children.add(NoItems())
+        }
+
+        val recyclerViewAdapter = RecyclerViewAdapter(this, children, this)
+        recyclerView.adapter = recyclerViewAdapter
+    }
 }
+
+
