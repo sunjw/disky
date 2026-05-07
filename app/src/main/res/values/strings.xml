@@ -39,7 +39,7 @@
     <string name="intro_slide_done_title">Done!</string>
     <string name="intro_slide_done_description">You are now ready to start!</string>
     <string name="intro_storage_title">Storage access</string>
-    <string name="intro_storage_description">Disky relies on the permission to access all files. Please grant storage access when prompted, otherwise the application will not work properly.</string>
+    <string name="intro_storage_description">Disky relies on the permission to access all files. Please grant storage access when prompted. \n\n Disky requires this permission!</string>
     <string name="intro_slide_usage_title">Usage Statistics</string>
     <string name="intro_slide_usage_description">We use usage statistics to calculate the disk usage by your apps.</string>
     <string name="contextmenu_file_open">Open</string>
@@ -58,7 +58,7 @@
     <string name="used">Used:</string>
     <string name="calculating">Calculating…</string>
     <string name="free">Free:</string>
-    <string name="warning_removable_storage">Warning! Removable Storage will be unreliable!</string>
+    <string name="warning_removable_storage">Warning! Removable Storage will be unreliable! Appdata might not be included.</string>
     <string name="contextmenu_delete">Delete</string>
     <string name="yes_delete">Yes, delete permanently!</string>
     <string name="no_keep">No, keep it.</string>
@@ -101,4 +101,8 @@
     <string name="is_below_the_threshold_of">%1$s is below the threshold of %2$d%%!</string>
     <string name="is_below_the_threshold_of_there_are_only_free">%1$s is below the threshold of %2$d%%!\nThere are only %3$s free!</string>
     <string name="scan_was_aborted">Scan was aborted</string>
+    <string name="missingpermission_button_fix">Fix!</string>
+    <string name="icon_warning_content_description">Warning Icon in red, Circle with an Exclamation Mark</string>
+    <string name="warning_storage_permission_missing">Warning! We do not have access to scan all your files! This will create nonsense-results!</string>
+    <string name="warning_appusage_permission_missing">Warning! We are not allowed to scan your apps. Apps will now be counted as system usage!</string>
 </resources>

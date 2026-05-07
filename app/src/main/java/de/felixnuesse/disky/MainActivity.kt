@@ -34,6 +34,7 @@ import de.felixnuesse.disky.background.ScanService.Companion.SCAN_PROGRESSED
 import de.felixnuesse.disky.background.ScanService.Companion.SCAN_STORAGE
 import de.felixnuesse.disky.background.ScanService.Companion.SCAN_SUBDIR
 import de.felixnuesse.disky.databinding.ActivityMainBinding
+import de.felixnuesse.disky.extensions.divOrMin
 import de.felixnuesse.disky.extensions.getAppname
 import de.felixnuesse.disky.extensions.readableFileSize
 import de.felixnuesse.disky.extensions.tag
@@ -91,15 +92,9 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         }
 
         LoggingUtils().configure(applicationContext)
+        updateWarningElements()
 
-        if (!PermissionManager(this).hasAllRequiredPermissions()) {
-            // todo: implement runtime intro for removed permissions
-            //startActivity(Intent(this, IntroActivity::class.java))
-            //finish()
-        }
-
-
-        storageManager = getSystemService(Context.STORAGE_SERVICE) as StorageManager
+        storageManager = getSystemService(STORAGE_SERVICE) as StorageManager
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.main) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -125,6 +120,9 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
         dropdown.setText(selectedStorage, false)
         binding.dropdown.onItemClickListener = OnItemClickListener { parent, view, position, id ->
             selectedStorage = storageList[position]
+            // when changing the storage, we also need to reset the current folder.
+            // otherwise calculating will fail for non internal storage.
+            currentElement = null
             binding.removableStorageWarning.visibility = View.GONE
             refreshData()
         }
@@ -164,6 +162,7 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
 
     override fun onResume() {
         super.onResume()
+        updateWarningElements()
         Timber.e("onResume")
     }
 
@@ -207,18 +206,18 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
 
         Timber.tag("POST_SCAN").e("scanComplete")
         Timber.tag("POST_SCAN").e("Result SV: ${result.scannedVolume}")
-        Timber.tag("POST_SCAN").e("Result FR: ${result.free}")
-        Timber.tag("POST_SCAN").e("Result TO: ${result.total}")
-        Timber.tag("POST_SCAN").e("Result US: ${result.used}")
+        Timber.tag("POST_SCAN").e("Result FR: ${result.free} ${readableFileSize(result.free)}")
+        Timber.tag("POST_SCAN").e("Result TO: ${result.total} ${readableFileSize(result.total)}")
+        Timber.tag("POST_SCAN").e("Result US: ${result.used} ${readableFileSize(result.used)}")
         Timber.tag("POST_SCAN").e("Result PS: ${result.isPartialScan}")
         Timber.tag("POST_SCAN").e("Result RN: ${result.rootElement?.name}")
         val s = android.text.format.Formatter.formatShortFileSize(this,
             result.asJsonString().toByteArray().size.toLong()
         )
-        Timber.tag("POST_SCAN").e("Result RN: ${s}")
+        Timber.tag("POST_SCAN").e("Result RN: $s")
 
         Timber.tag("POST_SCAN").e(
-            "${result.scannedVolume} ${result.free.div(result.total)} ${result.used}"
+            "${result.scannedVolume} ${divOrMin(result.free, result.total)} ${result.used}"
         )
 
         runOnUiThread {
@@ -256,6 +255,48 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
 
 
     /** UI METHODS **/
+
+    fun updateWarningElements() {
+
+        val didntHaveAppusagePermission = binding.warningAppAccess.visibility != View.GONE
+        val didntHaveStoragePermission = binding.warningStorageAccess.visibility != View.GONE
+        var hasAppUsage = true
+        var hasStorage = true
+
+        binding.warningAppAccess.visibility = View.GONE
+        binding.warningStorageAccess.visibility = View.GONE
+
+        val permissions = PermissionManager(this)
+        if(!permissions.grantedUsageStats()) {
+            binding.warningAppAccess.visibility = View.VISIBLE
+            hasAppUsage = false
+        }
+
+        if(!permissions.grantedStorage()) {
+            binding.warningStorageAccess.visibility = View.VISIBLE
+            hasStorage = false
+        }
+
+        binding.warningbuttonFixAppPermissions.setOnClickListener {
+            // this is broken. It does not properly direct the user to a working
+            // screen. The screen that opens does not do anything
+            // this is why we omit the package-name, and let the user
+            // manually open the correct app. That works.
+            permissions.requestUsageStats(this, true)
+        }
+
+        binding.warningbuttonFixStoragePermissions.setOnClickListener {
+            permissions.requestStorage(this)
+        }
+
+
+        val storageAccessChanged = didntHaveStoragePermission && hasStorage
+        val appusageAccessChanged = didntHaveAppusagePermission && hasAppUsage
+
+        if(storageAccessChanged || appusageAccessChanged) {
+            refreshData(true)
+        }
+    }
 
     fun registerReceiver() {
         Timber.e("registerReciever")
@@ -336,6 +377,11 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
 
         lastScanStarted = System.currentTimeMillis()
         val service = Intent(this, ScanService::class.java)
+
+
+        Timber.tag("Scanner_").e("Storage $selectedStorage")
+        Timber.tag("Scanner_").e("Storage ${currentElement?.getParentPath()}")
+
         service.putExtra(SCAN_STORAGE, selectedStorage)
         service.putExtra(SCAN_SUBDIR, currentElement?.getParentPath())
 
@@ -367,7 +413,11 @@ class MainActivity : AppCompatActivity(), ChangeFolderCallback, ScanCompleteCall
     fun updateStaticElements(currentRoot: StoragePrototype?, rootTotal: Long, rootUnused: Long) {
         Timber.e("updateStaticElements")
         if (currentRoot != null) {
-            val currentlyUsed = currentRoot.getCalculatedSize().div(rootTotal.toDouble())
+            var base = rootTotal
+            if(base == 0L) {
+                base = 1L
+            }
+            val currentlyUsed = currentRoot.getCalculatedSize().div(base.toDouble())
             fadeTextview(
                 readableFileSize(currentRoot.getCalculatedSize()),
                 binding.usedText

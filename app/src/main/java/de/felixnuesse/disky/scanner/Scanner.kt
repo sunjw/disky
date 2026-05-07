@@ -89,7 +89,8 @@ class Scanner(private var mContext: Context, private var callback: ScannerCallba
         result.scannedVolume = selectedStorage
         result.rootElement = rootElement
         result.free = getFreeSpace(storageStatsManager, selectedStorage)
-        result.used = rootElement?.getCalculatedSize()?: 0
+        // make sure we get the proper result here. If we logged it beforehand, we might have the wrong result.
+        result.used = rootElement?.getCalculatedSize(true)?: 0
         result.total = getTotalSpace(storageStatsManager, selectedStorage)
         result.isPartialScan = subfolder.isNotBlank()
         printRuntimeTime("res prep")
@@ -103,7 +104,7 @@ class Scanner(private var mContext: Context, private var callback: ScannerCallba
                 return it
             }
         }
-        // todo: throw new exception
+
         val msg = "We could not determine the used storage with name: $name. This is a fatal error!"
         Timber.tag(tag()).e(msg)
         throw RuntimeException(msg)

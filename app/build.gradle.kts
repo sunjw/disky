@@ -14,8 +14,8 @@ android {
         applicationId = "de.felixnuesse.disky"
         minSdk = 30
         targetSdk = 36
-        versionCode = 11
-        versionName = "2.0.0"
+        versionCode = 14
+        versionName = "2.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
